@@ -1,0 +1,137 @@
+name: Update Resume
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'resume.tex'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Resume Repository
+        uses: actions/checkout@v4
+      
+      - name: Compile LaTeX to PDF
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: resume.tex
+          args: -pdf -interaction=nonstopmode -file-line-error
+      
+      - name: Upload to Google Drive
+        id: upload
+        run: |
+          # Install gdown and dependencies
+          pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+          
+          # Create Python script for upload
+          cat > upload_to_drive.py << 'EOF'
+          import os
+          import json
+          from google.oauth2.credentials import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          
+          # Load credentials from secret
+          creds_data = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+          creds = Credentials.from_authorized_user_info(creds_data)
+          
+          service = build('drive', 'v3', credentials=creds)
+          
+          # Check if file exists (by name)
+          query = "name='Resume.pdf' and trashed=false"
+          results = service.files().list(q=query, fields="files(id, name)").execute()
+          files = results.get('files', [])
+          
+          file_metadata = {'name': 'Resume.pdf'}
+          media = MediaFileUpload('resume.pdf', mimetype='application/pdf')
+          
+          if files:
+              # Update existing file
+              file_id = files[0]['id']
+              file = service.files().update(
+                  fileId=file_id,
+                  media_body=media
+              ).execute()
+              print(f"Updated file ID: {file_id}")
+          else:
+              # Create new file
+              file = service.files().create(
+                  body=file_metadata,
+                  media_body=media,
+                  fields='id'
+              ).execute()
+              file_id = file.get('id')
+              print(f"Created file ID: {file_id}")
+          
+          # Make file public
+          permission = {
+              'type': 'anyone',
+              'role': 'reader'
+          }
+          service.permissions().create(
+              fileId=file_id,
+              body=permission
+          ).execute()
+          
+          # Generate shareable link
+          drive_link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+          print(f"Drive Link: {drive_link}")
+          
+          # Write to GitHub output
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"drive_link={drive_link}\n")
+              f.write(f"file_id={file_id}\n")
+          EOF
+          
+          # Run the upload script
+          python upload_to_drive.py
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      
+      - name: Update Website Repository
+        run: |
+          DRIVE_LINK="${{ steps.upload.outputs.drive_link }}"
+          
+          # Clone website repo
+          git clone https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/divy-03/blogfolio.git
+          cd blogfolio
+          
+          # Update Hero.tsx
+          sed -i "s|https://drive.google.com/file/d/[^/]*/view?usp=sharing|${DRIVE_LINK}|g" components/Hero.tsx
+          
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add components/Hero.tsx
+          git commit -m "Update resume link" || echo "No changes to commit"
+          git push
+      
+      - name: Update Dotfiles Repository
+        run: |
+          DRIVE_LINK="${{ steps.upload.outputs.drive_link }}"
+          
+          # Clone dotfiles repo
+          git clone https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/divy-03/dotfiles.git
+          cd dotfiles
+          
+          # Update espanso config
+          sed -i "s|https://drive.google.com/file/d/[^/]*/view?usp=sharing|${DRIVE_LINK}|g" espanso/.config/espanso/match/base.yml
+          
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add espanso/.config/espanso/match/base.yml
+          git commit -m "Update resume link" || echo "No changes to commit"
+          git push
+      
+      - name: Notify Success
+        if: success()
+        run: |
+          echo "✅ Resume updated successfully!"
+          echo "📄 PDF compiled and uploaded to Google Drive"
+          echo "🔗 Drive link: ${{ steps.upload.outputs.drive_link }}"
+          echo "🌐 Website and dotfiles repositories updated"
