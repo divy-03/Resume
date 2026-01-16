@@ -8,12 +8,14 @@ on:
       - 'resume.tex'
 
 jobs:
-  build-and-deploy:
+  update-resume:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Resume Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Compile LaTeX to PDF
         uses: xu-cheng/latex-action@v3
@@ -21,117 +23,51 @@ jobs:
           root_file: resume.tex
           args: -pdf -interaction=nonstopmode -file-line-error
       
-      - name: Upload to Google Drive
-        id: upload
+      - name: Commit PDF to Repository
         run: |
-          # Install gdown and dependencies
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add resume.pdf
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update compiled resume.pdf"
+          git push
+      
+      - name: Update File on Google Drive
+        run: |
+          # Install required Python packages
           pip install --upgrade google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
           
-          # Create Python script for upload
-          cat > upload_to_drive.py << 'EOF'
+          # Create Python script to update Drive file
+          cat > update_drive.py << 'EOF'
           import os
           import json
           from google.oauth2.credentials import Credentials
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
           
+          # File ID from your Drive link
+          FILE_ID = '1g8mh6ljWBp8ipTdmyZW6N4gTttL-DQB5'
+          
           # Load credentials from secret
           creds_data = json.loads(os.environ['GOOGLE_CREDENTIALS'])
           creds = Credentials.from_authorized_user_info(creds_data)
           
+          # Build Drive service
           service = build('drive', 'v3', credentials=creds)
           
-          # Check if file exists (by name)
-          query = "name='Resume.pdf' and trashed=false"
-          results = service.files().list(q=query, fields="files(id, name)").execute()
-          files = results.get('files', [])
-          
-          file_metadata = {'name': 'Resume.pdf'}
+          # Update the file
           media = MediaFileUpload('resume.pdf', mimetype='application/pdf')
           
-          if files:
-              # Update existing file
-              file_id = files[0]['id']
-              file = service.files().update(
-                  fileId=file_id,
-                  media_body=media
-              ).execute()
-              print(f"Updated file ID: {file_id}")
-          else:
-              # Create new file
-              file = service.files().create(
-                  body=file_metadata,
-                  media_body=media,
-                  fields='id'
-              ).execute()
-              file_id = file.get('id')
-              print(f"Created file ID: {file_id}")
-          
-          # Make file public
-          permission = {
-              'type': 'anyone',
-              'role': 'reader'
-          }
-          service.permissions().create(
-              fileId=file_id,
-              body=permission
+          updated_file = service.files().update(
+              fileId=FILE_ID,
+              media_body=media
           ).execute()
           
-          # Generate shareable link
-          drive_link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
-          print(f"Drive Link: {drive_link}")
-          
-          # Write to GitHub output
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"drive_link={drive_link}\n")
-              f.write(f"file_id={file_id}\n")
+          print(f"✅ Successfully updated file: {updated_file.get('name')}")
+          print(f"📄 File ID: {FILE_ID}")
+          print(f"🔗 Link: https://drive.google.com/file/d/{FILE_ID}/view?usp=sharing")
           EOF
           
-          # Run the upload script
-          python upload_to_drive.py
+          # Run the update script
+          python update_drive.py
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-      
-      - name: Update Website Repository
-        run: |
-          DRIVE_LINK="${{ steps.upload.outputs.drive_link }}"
-          
-          # Clone website repo
-          git clone https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/divy-03/blogfolio.git
-          cd blogfolio
-          
-          # Update Hero.tsx
-          sed -i "s|https://drive.google.com/file/d/[^/]*/view?usp=sharing|${DRIVE_LINK}|g" components/Hero.tsx
-          
-          # Commit and push
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add components/Hero.tsx
-          git commit -m "Update resume link" || echo "No changes to commit"
-          git push
-      
-      - name: Update Dotfiles Repository
-        run: |
-          DRIVE_LINK="${{ steps.upload.outputs.drive_link }}"
-          
-          # Clone dotfiles repo
-          git clone https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/divy-03/dotfiles.git
-          cd dotfiles
-          
-          # Update espanso config
-          sed -i "s|https://drive.google.com/file/d/[^/]*/view?usp=sharing|${DRIVE_LINK}|g" espanso/.config/espanso/match/base.yml
-          
-          # Commit and push
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add espanso/.config/espanso/match/base.yml
-          git commit -m "Update resume link" || echo "No changes to commit"
-          git push
-      
-      - name: Notify Success
-        if: success()
-        run: |
-          echo "✅ Resume updated successfully!"
-          echo "📄 PDF compiled and uploaded to Google Drive"
-          echo "🔗 Drive link: ${{ steps.upload.outputs.drive_link }}"
-          echo "🌐 Website and dotfiles repositories updated"
