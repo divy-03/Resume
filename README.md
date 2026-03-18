@@ -15,5 +15,3 @@ This repo is also associated with an automated workflow which updates my resume 
   - triggers on push on this repo
   - get the updated resume pdf
   - update the pdf uploaded on drive
-
-n8n testing
