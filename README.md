@@ -15,3 +15,4 @@ This repo is also associated with an automated workflow which updates my resume 
   - triggers on push on this repo
   - get the updated resume pdf
   - update the pdf uploaded on drive
+<img width="901" height="306" alt="image" src="https://github.com/user-attachments/assets/ce0f2975-0142-44a5-9cdf-5dce84bfa975" />
